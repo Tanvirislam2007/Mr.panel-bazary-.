@@ -1,0 +1,6 @@
+{
+  "name": "সেবা পে - সার্ভিস ও পেমেন্ট পোর্টাল",
+  "description": "অনলাইন সার্ভিস বিক্রি, বিকাশ ও নগদ পেমেন্ট গেটওয়ে, ইউনিক কোড অ্যাক্টিভেশন ও এডমিন ড্যাশবোর্ড।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

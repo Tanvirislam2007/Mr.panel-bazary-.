@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "Order": {
+      "title": "Order",
+      "description": "Customer order containing payment details, unique code, service package, and live countdown timer status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the order" },
+        "orderNumber": { "type": "string", "description": "Human-readable order serial number (e.g. SP-8849)" },
+        "serviceId": { "type": "string", "description": "ID of the purchased service" },
+        "serviceTitle": { "type": "string", "description": "Title of the service package" },
+        "amount": { "type": "number", "description": "Payment amount in BDT" },
+        "paymentMethod": { "type": "string", "enum": ["bkash", "nagad"], "description": "Method of payment" },
+        "senderNumber": { "type": "string", "description": "bKash or Nagad sender mobile number" },
+        "customerId": { "type": "string", "description": "Unique ID of customer" },
+        "uniqueCode": { "type": "string", "description": "Unique activation code for services and VPN" },
+        "transactionId": { "type": "string", "description": "Transaction ID provided by bKash/Nagad" },
+        "status": { "type": "string", "enum": ["pending", "verified", "activated", "expired", "rejected"], "description": "Current status of the order" },
+        "durationHours": { "type": "number", "description": "Hours allocated for service subscription" },
+        "expiresAt": { "type": "number", "description": "Unix timestamp in ms when subscription expires" },
+        "activatedAt": { "type": "number", "description": "Unix timestamp in ms when order was activated" },
+        "createdAt": { "type": "number", "description": "Unix timestamp in ms when order was created" },
+        "updatedAt": { "type": "number", "description": "Unix timestamp in ms when order was last updated" }
+      },
+      "required": ["id", "serviceTitle", "amount", "paymentMethod", "senderNumber", "uniqueCode", "transactionId", "status", "durationHours", "createdAt"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Available service package offered to users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique service ID" },
+        "title": { "type": "string", "description": "Display title of the service" },
+        "description": { "type": "string", "description": "Description of features" },
+        "price": { "type": "number", "description": "Price in BDT" },
+        "durationHours": { "type": "number", "description": "Validity period in hours" },
+        "badge": { "type": "string", "description": "Promotional badge tag" },
+        "popular": { "type": "boolean", "description": "Whether package is marked popular" },
+        "features": { "type": "string", "description": "Bullet points or highlights" },
+        "imageUrl": { "type": "string", "description": "URL of package illustration" },
+        "gradient": { "type": "string", "description": "Tailwind gradient class" },
+        "isCustom": { "type": "boolean", "description": "True if admin-created custom package" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" }
+      },
+      "required": ["id", "title", "price", "durationHours"]
+    },
+    "SiteBranding": {
+      "title": "SiteBranding",
+      "description": "Site branding, logo, and contact configuration",
+      "type": "object",
+      "properties": {
+        "siteName": { "type": "string", "description": "Portal display name" },
+        "logoUrl": { "type": "string", "description": "Custom logo URL" },
+        "contactPhone": { "type": "string", "description": "WhatsApp or Hotline contact phone" },
+        "bannerText": { "type": "string", "description": "Top announcement text" }
+      },
+      "required": ["siteName"]
+    },
+    "BannerConfig": {
+      "title": "BannerConfig",
+      "description": "Top announcement and promotion banner configuration",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Whether banner is shown" },
+        "text": { "type": "string", "description": "Announcement text" },
+        "link": { "type": "string", "description": "Target URL or anchor" },
+        "bgColor": { "type": "string", "description": "Background color style" }
+      },
+      "required": ["enabled", "text"]
+    },
+    "PaymentConfig": {
+      "title": "PaymentConfig",
+      "description": "bKash and Nagad numbers and payment gateway guidelines",
+      "type": "object",
+      "properties": {
+        "bkashNumber": { "type": "string", "description": "bKash personal or merchant number" },
+        "bkashType": { "type": "string", "description": "Personal or Agent" },
+        "nagadNumber": { "type": "string", "description": "Nagad personal or merchant number" },
+        "nagadType": { "type": "string", "description": "Personal or Agent" },
+        "instructions": { "type": "string", "description": "Step-by-step payment instructions" },
+        "adminEmail": { "type": "string", "description": "Admin notification email" }
+      },
+      "required": ["bkashNumber", "nagadNumber"]
+    },
+    "SetupTutorial": {
+      "title": "SetupTutorial",
+      "description": "Tutorial video and APK download links configuration",
+      "type": "object",
+      "properties": {
+        "videoUrl": { "type": "string", "description": "Tutorial video embed or stream URL" },
+        "title": { "type": "string", "description": "Tutorial heading" },
+        "description": { "type": "string", "description": "Setup steps explanation" },
+        "apks": { "type": "string", "description": "JSON serialized APK download list" }
+      },
+      "required": ["title"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authenticated admin users whitelist",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "description": "Admin email address" },
+        "role": { "type": "string", "enum": ["admin", "superadmin"], "description": "Admin authority role" },
+        "createdAt": { "type": "number", "description": "Timestamp when admin was registered" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of customer orders with verification and status tracking"
+    },
+    "/services/{serviceId}": {
+      "schema": "Service",
+      "description": "Collection of active and custom service packages"
+    },
+    "/settings/branding": {
+      "schema": "SiteBranding",
+      "description": "Global website logo, name, and contact settings"
+    },
+    "/settings/banner": {
+      "schema": "BannerConfig",
+      "description": "Global announcement banner settings"
+    },
+    "/settings/payment": {
+      "schema": "PaymentConfig",
+      "description": "Global bKash and Nagad payment gateway setup"
+    },
+    "/settings/setupTutorial": {
+      "schema": "SetupTutorial",
+      "description": "Global setup tutorial video and APK downloads configuration"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Whitelisted administrator accounts with access privileges"
+    }
+  }
+}

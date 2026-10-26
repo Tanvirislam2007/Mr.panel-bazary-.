@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Bootstrapped Admin check using database document or verified runtime admin email
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'tanvirislamtanvir512007@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    // 1. Admins Collection
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // 2. Services Collection
+    match /services/{serviceId} {
+      allow get, list: if true; // Public catalog for all visitors
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 3. Global Settings (Branding, Banner, Payment, SetupTutorial)
+    match /settings/{settingId} {
+      allow get, list: if true; // Public site configuration for all visitors
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 4. Orders Collection
+    match /orders/{orderId} {
+      // Helper to validate order payload
+      function isValidOrderPayload(data) {
+        return data.keys().hasAll(['id', 'serviceTitle', 'amount', 'paymentMethod', 'senderNumber', 'uniqueCode', 'status', 'durationHours', 'createdAt']) &&
+          data.id is string && data.id.size() <= 128 &&
+          data.serviceTitle is string && data.serviceTitle.size() <= 200 &&
+          data.amount is number && data.amount >= 0 &&
+          data.paymentMethod in ['bkash', 'nagad'] &&
+          data.senderNumber is string && data.senderNumber.size() <= 30 &&
+          data.uniqueCode is string && data.uniqueCode.size() <= 30 &&
+          data.status in ['pending', 'verified', 'activated', 'expired', 'rejected'] &&
+          data.durationHours is number && data.durationHours >= 0;
+      }
+
+      // Read single order or search
+      allow get: if true;
+      allow list: if isAdmin();
+
+      // Customer placement of new order
+      allow create: if isValidId(orderId) &&
+        isValidOrderPayload(incoming());
+
+      // Updates: Either admin or customer code-activation transition
+      allow update: if isValidId(orderId) && (
+        isAdmin() ||
+        (
+          // Customer activation action: Can transition to 'activated'
+          incoming().status == 'activated' &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'activatedAt', 'expiresAt', 'updatedAt'])
+        )
+      );
+
+      // Delete: Strictly reserved for Admin
+      allow delete: if isValidId(orderId) && isAdmin();
+    }
+  }
+}
