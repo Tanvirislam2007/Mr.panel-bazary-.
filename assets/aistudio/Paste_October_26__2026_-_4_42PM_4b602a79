@@ -1,0 +1,605 @@
+আমি আপনার দেওয়া সেবা-পে---সার্ভিস-ও-পেমেন্ট-পোর্টাল (2).zip ফাইলের কোডগুলো ভালো করে চেক করেছি। আপনি firebase.ts ফাইলে Firebase Storage যোগ করার চেষ্টা করেছেন এবং লগইন-এ ফায়ারবেস অথেনটিকেশন ব্যবহার করার কাজ শুরু করেছেন। এটা খুবই ভালো উদ্যোগ!
+
+তবে, store.ts এবং AdminPanel.tsx ফাইলে কিছু গুরুত্বপূর্ণ সিকিউরিটি এবং লজিকের ভুল রয়ে গেছে। সবচেয়ে বড় সমস্যা হলো, AdminPanel.tsx ফাইলে এখনও লোকাল পাসওয়ার্ড চেক করার কোডটি (store.verifyAdminPassword(passwordInput)) রয়ে গেছে এবং ইমেজ আপলোডের ক্ষেত্রে ফায়ারবেসের ক্লাউড স্টোরেজ ব্যবহারের কোড ঠিকভাবে লেখা হয়নি।
+
+আমি এই সমস্যাগুলো সমাধান করে একটি সঠিক ও নিরাপদ AdminPanel.tsx এবং store.ts ফাইল তৈরি করে দেব।
+
+🛠️ সমাধান ১: src/services/store.ts ফাইলে পরিবর্তন
+এখানে আমরা Base64 এর সমস্যাটি সমাধান করব এবং অ্যাডমিন পাসওয়ার্ডের আগের ডামি কোড সরিয়ে দেব (যেহেতু এখন ফায়ারবেস গুগল লগইন ব্যবহার করা হচ্ছে)।
+
+TypeScript
+import { 
+  Service, Order, OrderStatus, BannerConfig, 
+  PaymentConfig, ActivationCheckResult, SetupTutorialConfig, ApkDownloadItem,
+  SiteBrandingConfig, AdminRecoveryOtp
+} from '../types';
+import { firebaseService } from './firebase';
+
+const STORAGE_KEYS = {
+  SERVICES: 'shebapay_services_v2',
+  ORDERS: 'shebapay_orders_v2',
+  BANNER: 'shebapay_banner_v2',
+  PAYMENT_CONFIG: 'shebapay_payment_config_v2',
+  SETUP_TUTORIAL: 'shebapay_setup_tutorial_v2',
+  TERMS_ACCEPTED: 'shebapay_terms_accepted_v2',
+  BRANDING: 'shebapay_branding_v2',
+  ADMIN_RECOVERY_OTP: 'shebapay_admin_recovery_otp_v2',
+};
+
+export const DEFAULT_PACKAGE_IMAGE = '/assets/aistudio/Gemini_Generated_Image_x767mhx767mhx767_5b18910b.jpg';
+
+// Initial dummy data for the application...
+const INITIAL_SERVICES: Service[] = [
+    // ... [Previous Initial Services Data]
+];
+const INITIAL_BANNER: BannerConfig = {
+    // ... [Previous Initial Banner Data]
+};
+const INITIAL_BRANDING: SiteBrandingConfig = {
+    // ... [Previous Initial Branding Data]
+};
+const INITIAL_SETUP_TUTORIAL: SetupTutorialConfig = {
+    // ... [Previous Initial Setup Data]
+};
+const INITIAL_PAYMENT_CONFIG: PaymentConfig = {
+  bkashNumber: '01834-892100',
+  bkashType: 'Personal',
+  bkashQr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=01834892100',
+  nagadNumber: '01799-445566',
+  nagadType: 'Personal',
+  nagadQr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=01799445566',
+  supportPhone: '+880 1834-892100',
+  supportWhatsApp: '+880 1834-892100',
+  whatsAppGreeting: 'হ্যালো সেবা পে টিম, আমি সার্ভিস ও পেমেন্ট বিষয়ে সাহায্য চাই।',
+  adminPin: '', // Replaced by Firebase Auth
+  adminPassword: '', // Replaced by Firebase Auth
+  adminEmail: 'tanvirislamtanvir512007@gmail.com', 
+  masterRecoveryKey: '', // Replaced by Firebase Auth
+  verificationMode: 'manual', 
+};
+const INITIAL_ORDERS: Order[] = [
+    // ... [Previous Initial Orders Data]
+];
+
+class StoreService {
+  private inMemoryOrders: Order[] | null = null;
+  private inMemoryServices: Service[] | null = null;
+
+  setRemoteOrders(orders: Order[]): void {
+    this.inMemoryOrders = orders;
+  }
+
+  setRemoteServices(services: Service[]): void {
+    this.inMemoryServices = services;
+  }
+
+  isTermsAccepted(): boolean {
+    return localStorage.getItem(STORAGE_KEYS.TERMS_ACCEPTED) === 'true';
+  }
+
+  setTermsAccepted(accepted: boolean): void {
+    localStorage.setItem(STORAGE_KEYS.TERMS_ACCEPTED, accepted ? 'true' : 'false');
+  }
+
+  getServices(): Service[] {
+    if (this.inMemoryServices && this.inMemoryServices.length > 0) {
+      return this.inMemoryServices;
+    }
+    return INITIAL_SERVICES;
+  }
+
+  saveServices(services: Service[]): void {
+    this.inMemoryServices = services;
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('shebapay_services_updated', { detail: services }));
+      } catch {}
+    }
+  }
+
+  getServiceById(id: string): Service | undefined {
+    return this.getServices().find(s => s.id === id);
+  }
+
+  addService(service: Omit<Service, 'id'>): Service {
+    const services = this.getServices();
+    // Allow URL only, reject local Base64
+    const safeImage = (service.image && !service.image.startsWith('data:')) ? service.image : DEFAULT_PACKAGE_IMAGE;
+
+    const newService: Service = {
+      ...service,
+      id: `srv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: (service.title || 'নতুন প্যাকেজ').trim(),
+      category: service.category || 'ঘন্টা ভিত্তিক এক্সেস',
+      description: service.description || '',
+      price: Number(service.price) || 0,
+      originalPrice: service.originalPrice !== undefined && service.originalPrice !== null ? Number(service.originalPrice) : undefined,
+      durationHours: Math.max(1, Number(service.durationHours) || 1),
+      image: safeImage,
+      badge: service.badge || '⚡ স্পেশাল প্যাকেজ',
+      deliveryTime: service.deliveryTime || 'ইনস্ট্যান্ট অটো ডেলিভারি',
+      idLabel: service.idLabel || 'কাস্টমার ইউজার আইডি / গেমিং UID',
+      idPlaceholder: service.idPlaceholder || 'আইডি নাম্বার দিন',
+      features: (service.features && service.features.length > 0) ? service.features : ['ইনস্ট্যান্ট অটো কাউন্টডাউন', '৩টি এপিকে এক্সেস'],
+      instructions: service.instructions || 'পেমেন্ট সম্পন্ন হওয়ার পর প্রাপ্ত ইউনিক কোড দিয়ে এক্টিভ করুন।',
+      isAvailable: service.isAvailable !== false,
+    };
+    services.unshift(newService);
+    this.saveServices(services);
+    firebaseService.saveService(newService).catch(err => console.warn('Cloud save service notice:', err));
+    return newService;
+  }
+
+  updateService(id: string, updates: Partial<Service>): Service | null {
+    const services = this.getServices();
+    const index = services.findIndex(s => s.id === id);
+    if (index === -1) return null;
+
+    let cleanImage = updates.image;
+    if (cleanImage && cleanImage.startsWith('data:')) {
+        cleanImage = services[index].image || DEFAULT_PACKAGE_IMAGE;
+    }
+
+    const cleanUpdates: Partial<Service> = {
+      ...updates,
+      image: cleanImage !== undefined ? cleanImage : services[index].image,
+      title: updates.title !== undefined ? updates.title.trim() : services[index].title,
+      price: updates.price !== undefined ? Number(updates.price) : services[index].price,
+      originalPrice: updates.originalPrice !== undefined ? (updates.originalPrice ? Number(updates.originalPrice) : undefined) : services[index].originalPrice,
+      durationHours: updates.durationHours !== undefined ? Math.max(1, Number(updates.durationHours) || 1) : services[index].durationHours,
+      isAvailable: updates.isAvailable !== undefined ? updates.isAvailable : services[index].isAvailable,
+    };
+
+    services[index] = { ...services[index], ...cleanUpdates };
+    this.saveServices(services);
+    firebaseService.saveService(services[index]).catch(err => console.warn('Cloud update service notice:', err));
+    return services[index];
+  }
+
+  deleteService(id: string): boolean {
+    const services = this.getServices();
+    const filtered = services.filter(s => s.id !== id);
+    if (filtered.length !== services.length) {
+      this.saveServices(filtered);
+      firebaseService.deleteService(id).catch(err => console.warn('Cloud delete service notice:', err));
+      return true;
+    }
+    return false;
+  }
+
+  resetServicesToDefault(): Service[] {
+    this.saveServices(INITIAL_SERVICES);
+    return INITIAL_SERVICES;
+  }
+
+  getSetupTutorial(): SetupTutorialConfig {
+    const raw = localStorage.getItem(STORAGE_KEYS.SETUP_TUTORIAL);
+    if (!raw) {
+      localStorage.setItem(STORAGE_KEYS.SETUP_TUTORIAL, JSON.stringify(INITIAL_SETUP_TUTORIAL));
+      return INITIAL_SETUP_TUTORIAL;
+    }
+    try {
+      const parsed: SetupTutorialConfig = JSON.parse(raw);
+      if (!Array.isArray(parsed.apks)) {
+        parsed.apks = [];
+      }
+      return parsed;
+    } catch {
+      return INITIAL_SETUP_TUTORIAL;
+    }
+  }
+
+  updateSetupTutorial(config: Partial<SetupTutorialConfig>): SetupTutorialConfig {
+    const current = this.getSetupTutorial();
+    const updated = { ...current, ...config };
+    localStorage.setItem(STORAGE_KEYS.SETUP_TUTORIAL, JSON.stringify(updated));
+    return updated;
+  }
+
+  deleteApkItem(targetIndex: number): ApkDownloadItem[] {
+    const current = this.getSetupTutorial();
+    const updatedApks = current.apks.filter((_, idx) => idx !== targetIndex);
+    this.updateSetupTutorial({ apks: updatedApks });
+    return updatedApks;
+  }
+
+  clearAllDemoApks(): ApkDownloadItem[] {
+    const current = this.getSetupTutorial();
+    const demoIds = ['apk-vpn-custom', 'apk-large-file', 'apk-main'];
+    const filtered = current.apks.filter(a => !demoIds.includes(a.id));
+    this.updateSetupTutorial({ apks: filtered });
+    return filtered;
+  }
+
+  getBanner(): BannerConfig {
+    const raw = localStorage.getItem(STORAGE_KEYS.BANNER);
+    if (!raw) return INITIAL_BANNER;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return INITIAL_BANNER;
+    }
+  }
+
+  updateBanner(banner: Partial<BannerConfig>): BannerConfig {
+    const current = this.getBanner();
+    let safeImageUrl = banner.imageUrl;
+    if (safeImageUrl && safeImageUrl.startsWith('data:')) {
+      safeImageUrl = current.imageUrl;
+    }
+
+    const updated = { 
+      ...current, 
+      ...banner,
+      imageUrl: safeImageUrl !== undefined ? safeImageUrl : current.imageUrl 
+    };
+    localStorage.setItem(STORAGE_KEYS.BANNER, JSON.stringify(updated));
+    firebaseService.saveBanner(updated).catch(err => console.warn('Cloud sync banner notice:', err));
+    return updated;
+  }
+
+  getBranding(): SiteBrandingConfig {
+    const raw = localStorage.getItem(STORAGE_KEYS.BRANDING);
+    if (!raw) return INITIAL_BRANDING;
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        siteName: (parsed.siteName && typeof parsed.siteName === 'string') ? parsed.siteName : INITIAL_BRANDING.siteName,
+        tagline: parsed.tagline !== undefined ? parsed.tagline : INITIAL_BRANDING.tagline,
+        badgeText: parsed.badgeText !== undefined ? parsed.badgeText : INITIAL_BRANDING.badgeText,
+        logoUrl: (parsed.logoUrl && !parsed.logoUrl.startsWith('data:')) ? parsed.logoUrl : INITIAL_BRANDING.logoUrl,
+        packagesTitle: parsed.packagesTitle !== undefined ? parsed.packagesTitle : (INITIAL_BRANDING.packagesTitle || 'প্যাকেজ সমূহ'),
+      };
+    } catch {
+      return INITIAL_BRANDING;
+    }
+  }
+
+  updateBranding(config: Partial<SiteBrandingConfig>): SiteBrandingConfig {
+    const current = this.getBranding();
+    let safeLogoUrl = config.logoUrl;
+    if (safeLogoUrl && safeLogoUrl.startsWith('data:')) {
+      safeLogoUrl = current.logoUrl;
+    }
+
+    const updated: SiteBrandingConfig = {
+      ...current,
+      ...config,
+      logoUrl: safeLogoUrl !== undefined ? safeLogoUrl : current.logoUrl,
+      siteName: config.siteName !== undefined 
+        ? (config.siteName.trim() || current.siteName || INITIAL_BRANDING.siteName) 
+        : current.siteName,
+    };
+    
+    try {
+      localStorage.setItem(STORAGE_KEYS.BRANDING, JSON.stringify(updated));
+      if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('shebapay_branding_updated', { detail: updated }));
+      }
+      firebaseService.saveBranding(updated).catch(err => console.warn('Cloud sync branding notice:', err));
+    } catch (err) {
+      console.warn('LocalStorage error saving branding:', err);
+    }
+    return updated;
+  }
+
+  resetBranding(): SiteBrandingConfig {
+    localStorage.setItem(STORAGE_KEYS.BRANDING, JSON.stringify(INITIAL_BRANDING));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('shebapay_branding_updated', { detail: INITIAL_BRANDING }));
+    }
+    return INITIAL_BRANDING;
+  }
+
+  getPaymentConfig(): PaymentConfig {
+    const raw = localStorage.getItem(STORAGE_KEYS.PAYMENT_CONFIG);
+    if (!raw) return INITIAL_PAYMENT_CONFIG;
+    try {
+      const parsed = JSON.parse(raw);
+      const adminEmail = (parsed.adminEmail && parsed.adminEmail !== 'admin@shebapay.com')
+        ? parsed.adminEmail
+        : 'tanvirislamtanvir512007@gmail.com';
+      return {
+        ...INITIAL_PAYMENT_CONFIG,
+        ...parsed,
+        adminEmail,
+      };
+    } catch {
+      return INITIAL_PAYMENT_CONFIG;
+    }
+  }
+
+  updatePaymentConfig(config: Partial<PaymentConfig>): PaymentConfig {
+    const current = this.getPaymentConfig();
+    const updated = { ...current, ...config };
+    localStorage.setItem(STORAGE_KEYS.PAYMENT_CONFIG, JSON.stringify(updated));
+    firebaseService.savePaymentConfig(updated).catch(err => console.warn('Cloud sync payment notice:', err));
+    return updated;
+  }
+
+  // Remove local password verification. Firebase handles this now.
+  verifyAdminPassword(input: string): boolean {
+      return false; 
+  }
+
+  getOrders(): Order[] {
+    if (this.inMemoryOrders !== null) {
+      return this.inMemoryOrders;
+    }
+    return INITIAL_ORDERS;
+  }
+
+  saveOrders(orders: Order[]): void {
+    this.inMemoryOrders = orders;
+  }
+
+  private generateUniqueCode(): string {
+    const characters = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let codePart = '';
+    for (let i = 0; i < 5; i++) {
+      codePart += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    return `ACT-${codePart}-BD`;
+  }
+
+  createOrder(data: {
+    serviceId: string;
+    customerName: string;
+    customerPhone: string;
+    senderNumber: string;
+    customerId: string;
+    trxId: string;
+    paymentMethod: 'bkash' | 'nagad';
+  }): Order {
+    const service = this.getServiceById(data.serviceId);
+    if (!service) throw new Error('সার্ভিস পাওয়া যায়নি');
+
+    const cleanSender = data.senderNumber.trim().replace(/[^0-9]/g, '');
+    const cleanTrx = data.trxId.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const paymentConfig = this.getPaymentConfig();
+
+    const bdPhoneRegex = /^(013|014|015|016|017|018|019)\d{8}$/;
+    if (!bdPhoneRegex.test(cleanSender)) {
+      throw new Error('ভুল মোবাইল নম্বর! অনুগ্রহ করে ১১ ডিজিটের সঠিক ও সক্রিয় বাংলাদেশী বিকাশ/নগদ নম্বর দিন (যেমন: 017xxxxxxxx, 018xxxxxxxx)।');
+    }
+
+    const fakeNumbers = [
+      '01700000000', '01711111111', '01712345678', '01812345678', '01912345678', 
+      '01612345678', '01512345678', '01800000000', '01900000000', '01600000000',
+      '01300000000', '01400000000', '01888888888', '01999999999', '01799999999'
+    ];
+    if (fakeNumbers.includes(cleanSender) || /^01\d(\d)\1{7}$/.test(cleanSender)) {
+      throw new Error('অকার্যকর বা ভুয়া মোবাইল নম্বর গ্রহণযোগ্য নয়! অনুগ্রহ করে আপনার নিজস্ব প্রকৃত নম্বর দিন।');
+    }
+
+    const targetReceiver = (data.paymentMethod === 'bkash' ? paymentConfig.bkashNumber : paymentConfig.nagadNumber).replace(/[^0-9]/g, '');
+    if (cleanSender === targetReceiver) {
+      throw new Error('প্রাপক নম্বর এবং প্রেরক নম্বর একই হতে পারে না! আপনি যে ব্যক্তিগত একাউন্ট থেকে টাকা পাঠিয়েছেন সেই নম্বরটি দিন।');
+    }
+
+    if (data.paymentMethod === 'bkash') {
+      if (cleanTrx.length !== 10 || !/[A-Z]/.test(cleanTrx) || !/[0-9]/.test(cleanTrx)) {
+        throw new Error('ভুল বিকাশ TrxID! বিকাশ ট্রানজেকশন আইডি অবশ্যই ঠিক ১০ ডিজিটের আলফানিউমেরিক কোড হতে হবে (যেমন: BKT92918840)।');
+      }
+    } else {
+      if (cleanTrx.length !== 8 || !/[A-Z]/.test(cleanTrx) || !/[0-9]/.test(cleanTrx)) {
+        throw new Error('ভুল নগদ TrxID! নগদ ট্রানজেকশন আইডি অবশ্যই ঠিক ৮ ডিজিটের আলফানিউমেরিক কোড হতে হবে (যেমন: 71KA9021)।');
+      }
+    }
+
+    const fakeTrxPatterns = [
+      '12345678', '00000000', '11111111', '87654321', 'TEST', 'DEMO', 
+      'TRXID', 'FAKE', 'ABCDEF', 'BKASH', 'NAGAD', 'PAYMENT', 'DUMMY'
+    ];
+    const hasFakePattern = fakeTrxPatterns.some(pat => cleanTrx.includes(pat)) || /^([A-Z0-9])\1{6,}$/.test(cleanTrx);
+    if (hasFakePattern) {
+      throw new Error('অকার্যকর বা ভুয়া TrxID সনাক্ত হয়েছে! অনুগ্রহ করে বিকাশ/নগদ অ্যাপে টাকা পাঠিয়ে প্রাপ্ত সঠিক এসএমএস TrxID দিন।');
+    }
+
+    const orders = this.getOrders();
+    const isDuplicate = orders.some(
+      o => o.trxId.toUpperCase() === cleanTrx && o.status !== 'rejected'
+    );
+    if (isDuplicate) {
+      throw new Error('এই ট্রানজেকশন আইডি (TrxID) দিয়ে ইতিপূর্বে পেমেন্ট সম্পন্ন হয়েছে! ডুপ্লিকেট TrxID গ্রহণযোগ্য নয়।');
+    }
+
+    const uniqueCode = this.generateUniqueCode();
+    const orderNumber = `ORD-${Math.floor(10000 + Math.random() * 90000)}`;
+    const durationHours = service.durationHours || 1;
+    const isAutoMode = paymentConfig.verificationMode === 'auto';
+    const status: OrderStatus = isAutoMode ? 'verified' : 'pending';
+
+    const newOrder: Order = {
+      id: `ord-${Date.now()}`,
+      orderNumber,
+      serviceId: service.id,
+      serviceTitle: service.title,
+      serviceImage: service.image,
+      amount: service.price,
+      customerName: data.customerName.trim() || 'গ্রাহক',
+      customerPhone: cleanSender,
+      senderNumber: cleanSender,
+      customerId: data.customerId.trim() || cleanSender,
+      trxId: cleanTrx,
+      paymentMethod: data.paymentMethod,
+      uniqueCode,
+      durationHours,
+      status,
+      createdAt: new Date().toISOString(),
+      adminNotes: isAutoMode 
+        ? `স্বয়ংক্রিয় ভেরিফাইড পেমেন্ট (${durationHours} ঘন্টা)। ৩টি এপিকে সেকশনে কোড দিলে টাইমার চালু হবে।` 
+        : `এডমিন ভেরিফিকেশন অপেক্ষমাণ (${durationHours} ঘন্টা)`,
+    };
+
+    orders.unshift(newOrder);
+    this.saveOrders(orders);
+    firebaseService.saveOrder(newOrder).catch(err => console.warn('Cloud save order notice:', err));
+    return newOrder;
+  }
+
+  adjustOrderHours(orderId: string, hoursDelta: number): Order | null {
+    const orders = this.getOrders();
+    const index = orders.findIndex(o => o.id === orderId);
+    if (index === -1) return null;
+
+    const order = orders[index];
+    const newDuration = Math.max(1, order.durationHours + hoursDelta);
+    const baseTime = order.activatedAt ? new Date(order.activatedAt).getTime() : Date.now();
+    const newExpiresAt = new Date(baseTime + newDuration * 3600 * 1000).toISOString();
+
+    orders[index] = {
+      ...order,
+      durationHours: newDuration,
+      expiresAt: newExpiresAt,
+      adminNotes: `${order.adminNotes || ''} | এডমিন ঘন্টা পরিবর্তন: ${newDuration} ঘন্টা`,
+    };
+
+    this.saveOrders(orders);
+    firebaseService.updateOrder(orderId, {
+      durationHours: newDuration,
+      expiresAt: newExpiresAt,
+      adminNotes: orders[index].adminNotes
+    }).catch(err => console.warn('Cloud update hours notice:', err));
+
+    return orders[index];
+  }
+
+  updateOrderStatus(orderId: string, status: OrderStatus, adminNotes?: string): Order | null {
+    const orders = this.getOrders();
+    const index = orders.findIndex(o => o.id === orderId);
+    if (index === -1) return null;
+
+    const current = orders[index];
+    let activatedAt = current.activatedAt;
+    let expiresAt = current.expiresAt;
+
+    if (status === 'activated' && !current.activatedAt) {
+      activatedAt = new Date().toISOString();
+      expiresAt = new Date(Date.now() + (current.durationHours || 1) * 3600 * 1000).toISOString();
+    }
+
+    orders[index] = {
+      ...current,
+      status,
+      activatedAt,
+      expiresAt,
+      adminNotes: adminNotes ?? current.adminNotes,
+    };
+
+    this.saveOrders(orders);
+    firebaseService.updateOrder(orderId, {
+      status,
+      activatedAt,
+      expiresAt,
+      adminNotes: adminNotes ?? current.adminNotes
+    }).catch(err => console.warn('Cloud update status notice:', err));
+
+    return orders[index];
+  }
+
+  deleteOrder(orderId: string): boolean {
+    const orders = this.getOrders();
+    const filtered = orders.filter(o => o.id !== orderId);
+    if (filtered.length !== orders.length) {
+      this.saveOrders(filtered);
+      firebaseService.deleteOrder(orderId).catch(err => console.warn('Cloud delete notice:', err));
+      return true;
+    }
+    return false;
+  }
+
+  verifyAndActivateService(uniqueCode: string, customerId?: string): ActivationCheckResult {
+    const cleanCode = uniqueCode.trim().toUpperCase();
+
+    if (!cleanCode) {
+      return {
+        success: false,
+        message: 'অনুগ্রহ করে আপনার ইউনিক কোডটি প্রদান করুন।',
+        errorType: 'NOT_FOUND',
+      };
+    }
+
+    const orders = this.getOrders();
+    const matchingOrder = orders.find(
+      o => o.uniqueCode.toUpperCase() === cleanCode
+    );
+
+    if (!matchingOrder) {
+      return {
+        success: false,
+        message: 'ভুল ইউনিক কোড! এই কোড দিয়ে কোনো পেমেন্ট রেকর্ড পাওয়া যায়নি।',
+        errorType: 'NOT_FOUND',
+      };
+    }
+
+    if (matchingOrder.status === 'rejected') {
+      return {
+        success: false,
+        message: '❌ এই অর্ডারটি ভুল তথ্য বা ভুয়া ট্রানজেকশনের কারণে বাতিল ও ব্লক করা হয়েছে! কোনো সার্ভিস বা এপিকে প্রদান করা হবে না।',
+        errorType: 'REJECTED',
+        order: matchingOrder,
+      };
+    }
+
+    if (matchingOrder.status === 'pending') {
+      return {
+        success: false,
+        message: '⚠️ আপনার পেমেন্টটি এখনও এডমিন কর্তৃক যাচাই করা হয়নি (Pending Verification)। বিকাশ/নগদ পেমেন্ট কনফার্ম হলে আপনার ইউনিক কোডটি স্বয়ংক্রিয়ভাবে সক্রিয় হবে এবং ৩টি এপিকে ডাউনলোড ও সার্ভিস চালু হবে।',
+        errorType: 'NOT_PAID',
+        order: matchingOrder,
+      };
+    }
+
+    if (matchingOrder.expiresAt) {
+      const isExpired = new Date(matchingOrder.expiresAt).getTime() < Date.now();
+      if (isExpired) {
+        matchingOrder.status = 'expired';
+        this.saveOrders(orders);
+        return {
+          success: false,
+          message: `আপনার সার্ভিসের মেয়াদ (${matchingOrder.durationHours} ঘন্টা) শেষ হয়ে গেছে। দয়া করে নতুন সার্ভিস ক্রয় করুন।`,
+          errorType: 'EXPIRED',
+          order: matchingOrder,
+        };
+      }
+    }
+
+    if (matchingOrder.status !== 'activated') {
+      const activatedAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + (matchingOrder.durationHours || 1) * 3600 * 1000).toISOString();
+      matchingOrder.status = 'activated';
+      matchingOrder.activatedAt = activatedAt;
+      matchingOrder.expiresAt = expiresAt;
+      this.saveOrders(orders);
+      // Synchronize activation status to cloud
+      firebaseService.updateOrder(matchingOrder.id, {
+          status: 'activated',
+          activatedAt: activatedAt,
+          expiresAt: expiresAt
+      });
+    }
+
+    return {
+      success: true,
+      message: `🎉 অভিনন্দন! ৩টি এপিকে সফলভাবে আনলক হয়েছে এবং আপনার কেনা সার্ভিসের ${matchingOrder.durationHours} ঘন্টার লাইভ কাউন্টডাউন টাইমার শুরু হয়েছে!`, order: matchingOrder, }; }  getSalesAnalytics() { const orders = this.getOrders(); const validOrders = orders.filter(o => o.status !== 'rejected'); const totalRevenue = validOrders.reduce((sum, o) => sum + (o.amount \vert{}\vert{} 0), 0); const bkashOrders = validOrders.filter(o => o.paymentMethod === 'bkash'); const nagadOrders = validOrders.filter(o => o.paymentMethod === 'nagad'); const bkashRevenue = bkashOrders.reduce((sum, o) => sum + (o.amount \vert{}\vert{} 0), 0); const nagadRevenue = nagadOrders.reduce((sum, o) => sum + (o.amount \vert{}\vert{} 0), 0); const activeCount = orders.filter(o => { if (o.status !== 'activated') return false; if (!o.expiresAt) return true; return new Date(o.expiresAt).getTime() > Date.now(); }).length;  return { totalOrders: orders.length, validOrdersCount: validOrders.length, totalRevenue, bkashOrdersCount: bkashOrders.length, bkashRevenue, nagadOrdersCount: nagadOrders.length,
+      nagadRevenue,
+      activeSubscriptionsCount: activeCount,
+    };
+  }
+
+  resetDefaults(): void {
+    localStorage.removeItem(STORAGE_KEYS.SERVICES);
+    localStorage.removeItem(STORAGE_KEYS.BANNER);
+    localStorage.removeItem(STORAGE_KEYS.PAYMENT_CONFIG);
+    localStorage.removeItem(STORAGE_KEYS.ORDERS);
+    localStorage.removeItem(STORAGE_KEYS.SETUP_TUTORIAL);
+    localStorage.removeItem(STORAGE_KEYS.BRANDING);
+    localStorage.removeItem(STORAGE_KEYS.TERMS_ACCEPTED);
+    localStorage.removeItem(STORAGE_KEYS.ADMIN_RECOVERY_OTP);
+  }
+}
+
+export const store = new StoreService();
+PK  
+     íTZ]aZUm* wg53 Dy@U Szffo j-Z' ECP)QB I%/R *H%X )tVC SSWp )0:P `<{f$# KTvh >Tv|o xg-( XBmQ v2o*k fYQ?l .1$+ #mZ3 a8i! !ULY WBZ] src/services/firebase.ts `yb; ^16) oA&tH hcU] (|x~|pq n<:>96 ~\S- ~n7j 3,D6 =i^s RCoz X@-KM $%4/ F#SDU a]HF nh:f Zje.[ =+N5: RR,? qU?? 7tl@6 a!%L rKT{ ~lup public/assets/aistudio/WhatsApp_Image_2026-10-25_at_8.13.14_PM_164d633e.jpeg L1333c )ffff `_o8 CCBCA G#a0*( P0&+ QP!f Jl)~ /FSa? r0<( 3g4z [WQF @#'@ (Oq@ ?G"f iSXX DE sr CkD l O$tt.3# -BxH8o8 #!c& e'$. >TuX Co+$ 'ZaY ")&Ln uykqm N22L KWKV JPr^<R *RjC 2:vRD ,k}T `({NB' /H<JY DAKD] Q},Q h_X5o-p 3f_y9 ,(n2! XbC&N S77!7 ="gi=< j?U!? >?35gMCw 4)sZ V~3p 5j-6D 3$Cx@ @22A 8'7p 9p!F 4'x1g L`=` "9ZM z9kXW OS/+ AQ?C 9w+) P'gX5 wOsr iB[44 cpDp j'&Y i+gU3 x)BC~ -t(o E.<a ~WD + w*h6 xKMH ?29< g,l>, m&'AI w6R( 5.fT?t ;e`s;H( 6FBj <.YN }#c'$ _PRB .3D. ='si Ypj5 ncA, -y}k |-]s >->~5 TJ^}Y 7i91 1|2H _Cy4Yp 7<Fy 5)+d rYwm .0q.y =R;( "i!U  iA, Y-8Qdy WPuF xQ\;*( 8M?:& tmmfG JQ]+ t3G\ f+F66bV ;9/yH :aU` 'cf5I <'aNM v>f$ k;_O 02r*D 3xI++ lvX< p06% 47[MMP v2Pp Wgl#( <2B%= :.=xR~ }W^=> i'1g `X-q J$/y uJi\ 9VyY(`) "p"I 3d|O pwb( u_qY LKF<B Q%CV Tv[M1. !y.f -AI7 21JF {Y?| ja(c %iP* GB\I^ 8={; a[ ( bwUi *yRc <i`K~; XKQE ;Bk\ \X1w Mhu: z_eZt 8!C| {6p_ PN\` i'D~ WCKm, ] Z  L[(= t/u{ eVNW lBX8 `T*n]_G }18c8I ! /5P )\+W grCN @ q_s |;$F " q5 >yr6 5 $: 5%:ysn ~"y! Wy%_ DyP| IB`D ;m2OM ;kK! A9!_ go@l ]r<6 xvjX XW|[ 5Y9FZ 8NHq |<P~ MhE8v Lr9>[p 1h:>h I9H[?p #aZzi- e7xP }[/V%{] \?#l *A#b T5N# sBdX |I/, \tjY $%z!M gk/X GN-, Tf4wvCMe OQ@+ }~1s }{Nl aYEY#a qpp7j.ywi n&tJ "liF .e.l WkG[F. Q;_^ uz?8 EOq6 ECm1"H [j?y fKT6Q +1*2 P%H;,f ,nO_ q{yj; a9$e c9T= >-}f_ (t:w Gdox C0<js -N"- )Kg  wwwwwww xr7N_ 2CCN v">c &)vW nYE3 XJ> BUx _$T3Xf Cgs3# Zs#{{J w`Jh * .O d!Lp EDj58 N)1H~ D^"-b0# VSii 1$&2 )Byu /%f| *e^M }% zQ{ VLrb O)@JXe [@,F +6>9 90J$M ^i8t fc_~ =zcI;> H$-$_{Btie i:La2D j\vert{}78U \%dad F=$e= /8W{ v@]/^ x$Dp \%Z\j >h[$ TbRq XuSe T\C_c aB_T 5gIsv ,De& $-$Z ";Z| 'Rhu ak|z f*@OZ ? "n! s1qVq 06@4Pb lh$N* klu@ Y'nl MNf^ jCv=S) u;0E W&1O'WH ORjH g:O0~ |Kq+e YQEE emmm jS42 Zlr9 JoTN:p" ]z-1 56p} {yKl ,*6>C D)0R jiyx- 8n.S NI'S [jB) i}Y8sm ]9 B {1m< <f/R %/q%ec s qq 4Qx# k`5h 3`9uy _c;| s<bR Q+67H K&u3 QfEz (YVx V2G"_pAp NVH2 ,>3G ;#%# q2m^ Jz#sWrO q|rp 16m0 Mb+~T :v(<fj i1@O44  i/)7 a$}N  `m* g5Ule G%To ]s\- N5eqI HkSrf ip95 DXx& ^Edu(q \u{_ T4=)PD l^x! 8g7f= 5K5r- \o/Y @Vz6 r!2g) ?q,8B )N/h  }]?P$HAn wRPL ?qRUJ +MgOI@ \I$e ^-oK 1W%f OjB{ \9r.) H3N5 n[/e 95p9 d+}0 Q=&+ *qU;  ;bw ^G|3- bs<!# >5R' ^zVB x,!" 3Mc0u k3Fu QpRp u'kV$ 3(c? .N Eo._ bZ9N C#rC U>vN H:k}| ;ZNw8 *,/[ ]d){P *=re \|T) <Ikd cy,8 *O<Y.S eImT {YDJ6; 7I?& _c%T ~LyJ 8P:HK 6PNq 1d01) BiVV OZ3g fDcbG] w}ze /Bk& 2Vzl^ 63.z AGm  #~\-B xw`?hEK LhjG x,w, ?bQUIX; eUIX' -h4A Gz~|9 =>XI O"nx sUty >M#2s "C+? ZguX ZWAb )'X> zB%k{ qcdS{o M4uL2 ?g+Y M"C4F 40+Fgs L!`' z1nf r\f> H^;Y :Us} cYL#E ]DB>  Bp' 8P"eo s1dag + &rLT) !Cmox m"MS bi5& %bD^6* L{dC UV[|2 0N@//H -&s{ 2"uI &x=ij#2 qbZI T+_~ QUg_ @IHa '2;[( (6KW.G OV2? 4T8+l =`E* r_ZY$ RN,E ==Mwe rb*8 /_yv'\" eA<w Pw3. eQS1 SX{g zhJ4 $(+^8I SB/F xk]F MonI o+bB$<phM( PK4sR ?Rj" wu{Y dcm2 }j"5 B a):V ;Zk9 [jMX ~3Rz? /|3R@ IgQ*b p`hLN 2_;g *.JApF x;+gG 6scx +ZQBks j7|O[ >/Hh /)2D +??# OC#'IV ||D3 .CGE G]Ut ![2N q:{>g8 YNg(Y $h&J 35$[ }j|Z />#V+ ci2< wYM< rQ3& ("/LE3 B'MV JUt, =?a39 A~(k f?#q@n yhMI5O 'l9_y BXxS jpB. ,B{I t/bQ &xF} Mp=1ZL )y3G: :d h  'Xg ,jp]Q ;!V8 =2K5 y,y& -bui }-** [%W=~ D_E=63 ~p-7I #*/t26q ~hga Z(\76 =YKRBf A\{A !k%q 9uL.5 )Vue m@-t hGHbH8 vqZ,@D gt9G &r93G ;1qf k1]d 62Bl I!fE@ C,kX Det& %jPf,Dk; 9iqr \4a. GE[]. ?E{pT ]r7n sKYv8/ qOW_ xBj3j{*j >[ME s.he\ jcDo u(Oci '&7b Ng;*@ Tv(t (y\a, K>0jb tEE, Q02h $x[r^ oqzK GI?h= xK#j 8(J{ .CiR, hEb] V<WGJr\ bZ"L _C3@ N#G=  <Z?Q zmV& X!LD >_s-SL 4d9/ _%X+] TqvVv 7=s?O0m gOC^ e<6P 7T6R RRK1 JFp$ ,gdl eG*y5I|U Y<gE Re%4 o]W` (:U) i<v0] #UiO ~g^?& *4:_ (|+) \8 n >g+" wlDX "&/v {0+x )R@bX m[Pl m1333Yh moYr Z`WwZK9O Rjk!^ Lri[ _e.C 2hc6j +^{h 3^6x? ufcA HE@2 >he7`w nppM s@E7 Y-9W //O(a[w xp9$N .e!(t Kz7] N_#~ V`LVvO IMbB kOvK5  wFw n,jS2? 8z0. NW&i o*+e [*i;0 (ag}D d01S |#-m w`,emnG} Gt^* nZR] ob[Q e?Qjyj [}>0 [sM,ko\ ;"%Ni. X[-a mvVY f0wD =.>O _NN\ %y;cS BGxk :^"yGY <fyj ipWS duI/ SUdQX  WH>Ach i$S;7 4usb03nZy ~%Y4l 7sBI 3 KF H qx, W0G2|r Xji{ Q^YZ .Fj)j* C vaXy[X WxOL :t\p XE;Ts *eWt*THU 3k9i ^e0u aq|H [z&D ?k_u &@@, W5j={ t*7T , H1~I GFcF 5:~3 j%oI 2j8n TJ~Y:\ ;%@=Q]a n[K~. MV)o 7Ih% zT*Q O_AX 5{U^C IpQ} *>s&klV&7 :O:= d#|I W0kE u?[^ .x?E5 z/PG [k:v s@E. o0X@ GJ$~rV Yvc3M dIs9 }fOk KOTg \vert{}Q6{ uHs\ N\vert{}Ls r>z: ^ \%'* &o0< Jd!e ovG&\%o {t~[ ~*4dCd 88V:$ ei;N m('v cR)R irF#c J~xe zQRi xM\M ~o_! SioE ftG3" BM>u $SYd '!?Z vTch9Ef 77$> \%hA: ,C1* &dem )*j@: ^v98-Mx )YrX dZtx L;(X +gw~ ];ECz ;o$F GJ=3 iNo/ ey\l P?!Ums fJA?(' @f6F U;{R^ l!kU ,=[?  W\FD )]od~? 1^>3( :,4g' "|k7 .}*N Sh&6H B0Va 3%iF @jjvl m{Dh X]1r QsuT %9qS I{D0 4cJJN H.:- u[QQ O-WCL* \t7B y=oG MH>d@ TV7_ *}cXr2 nS@- Ds,\ fl6S `\v9 XmYlY R<AR y8b6 Wrt.+ u`rbF5 D4I>8M >T.PD6D/ |sa9 mPQ+6X z|<f@ Tj7% c?&V s]j* *JuVvn )r}L B`GS liON5 4`*7 7#mX N<6{W _f@vQ a@36: XNn4 6dp" ({b[ NxWyW x+Jv gYyi 3KxT 'iL@G /+Y; W7e1 >9`{F ;rzE% bB N _[XJ 5cH- ~N)E (.EL YjRr >+Sj nUGM !WYX Ly3Ci xs"# siQh -icE .F@* gDf4. ta|/og 4fvh *x[]N bn+*Tl RR]i Q9<4Z zmc=RtX`; +kY| G?I^y ]THPW8hoJy I|=AbX 6n8h%9 BUwV fij+ ranj . }.3L9J WAU\ ov)\ oTB. j2xg]j q7HG> MCd_ eR'.8 ,;ahx# F6~o P Co "<]o m2"^: *3r. H"s<0 aK"Q vV)F`e <gL+ HNZ"5 Oj%1x "V}9 xp#X Iq5w[ 8Kih! +zY^QB,o= ^dNE 0I6t IlZs WP=Lz O?IVH9k O-cR O* %% *_'^ 5]>#* A(xd^ w X4 #Ifv, ?I v# !^P1 ZNxw *Bl  #o96E b@F* qxP6 h/3~ 4[4Wh 6>'R[Sc &Tk- KTV# H x< `WSz J|!^" DVn\9 ArG|y ]IW~ ?7jH:f (fVT :+x  8-^F0 "d;ebw ;O#\ |RzF `G6Z ,akCUV +HQz b[wr g?r? }g[s j=os f,p60T :XIV !v3xj deZ~c ^0LZHn3 CCSn "7)+ K\e0F ex~L fT]o KPV- &<,)n Pzl# 9;Uas >&AU7<uEqx }l#"l ~egnQ U@?& 76Er- f)T`O9.Z B[T| 5>}/ _r8) P,t@ Fr/1{ y$e# y<N} t3[Mz <JEDKM %fC## ,beQ qFrj ar8; M!?q Tz4u L> 8 J.,^ -2(, zJwC WAT= x)MA z;VbI tTm'Q ofxg '(xd ZQ?N _b->Y o\?S# OxX_ z=f= 9-XD f}Ph YMTn3Eq Jx(@Q 2N]: Nn"Jh |u,3 7/(Q Hfo_ J" d- c<aZ 1cI^Qw FDLP F&\O EsyGN ,7i\  'n" d-KU5 WEbBgq lB8Y, ^)5k TEr46 rpBA 82g+. | Q!ZC N>KR ]8I1&U7 73_v[ 55J. WY*&~ F[)2 m$k) >TlcU !:WVq i:r1t' xQU9 F@KOl 7;Hz -60~ W.2T oV'+ RQQ( 1Z#F 8#:" LF}[[ 9m=b, aXus 5g\W y.,N 6wk*Q&sk qx%+ Mk5+ JDrs {~^e [A5  &G}MT ?LX& _Tf>- ~%4E ~zJ32 |k6im hK{$p=_ tc &1cEq  \vert{}MB [>1vb )G[7 \?ki E_M\% S?}{ UF?& rXR\%u kH$M t?iA  ?yX` Bb9rf6 nf5*9bp /1SJp YAA> &# S 5dvR #=I~ /RJu& D336'xHRQ fG0# ^WAiZ> ek!e X|oU k2MGl t>8-k- UM@] J=#K 6dbF} 3edK .oGmc 7M;c 4,zy <Y{z [_0K =A=D \5.f mxRM 4@U@ .r>{ et#Vs !zxxg oF;$< geBsq~+V o01F h`7^ =up8 ac9toct 2L03 .&f^ >3l_Yw KJm1 jh!Ti c:m` l'%E y'\T2v ]]=zY rfHT)O b;p}}2 (Cy><X 30t? >y&) j<}s7 {",=A yvp4H# [>}h oyGJ? _8a' -'lU >w`g n[Zw sMx} P>&G ,2Ha ickyv fUoBC{ 7FD(] sZM6= :JnXx e5sfj 2+2]R6; _37. :0F=r Weu( kD;k ;!`a 'o~M [x46 JTW[G5 i0q43 ~Ix, pQXR 89X` y7|v; <#_C? ${/~ nh7E \utG wcB@c ^t]x jbtV> 8fx1 V!YN: q0y5/ 6mP=6 k.g() (M|o 3Wj0 ZZ<5^ LOU7T  ~~, q:zF  L6gN NW1D ,GZ{ psBM+ IoYJ *OE> W\R<Y$ 6jT  m;`+E \lbz C7T  _\Q[ FR#3 8cLn !a [kG nq._ !?T2wq4? W)-{ #K][(e ZilE41{ ~L*j (%.u *(J;A c;qEY  AM6 pG-K ?=LP|lF/ 4AS. oUq, >SAR) 9L'<b O_~-9 o)M= O)8RA _6p$hD %lE[J 4HN;W p}R. RjZ\ J('C 6W{l )xKp {/|3 zAxl? DR3^M qo[`/\ &=J3 [bYxj i+Od MeyS @/yB VyxU v,y! Qo|6 PmV$ k*/7`?h  -~] 2<qI Mi92 qwI$ kW?U BrCa iE7R <.-O r/"\p+ UI4O ,A`j- 9,W# &WaS{ X`,J /$V_ c6(d #02R \zL\ q>OM :j`> rgTn xon% ~$?y"1 D>BP\vert{}Z Y7/Z. W/l$ ^s&0 |Fv_ %A3Mj] xEZJ 4Z`" ,2w\ 6%/[ GfGG Pso^c l[@1 v&rZK '|=X' LdTXRO EOhW <%1+ sn02 A/_R( @C.s 4"}<zb {Z={ -i]# !z,g:} uZ;E h'~\' &S": qXC+I 2OwU ZYV- ,n]h@ xI_3M n96+/] iJ(%3 *Z s` Dj+3k[ ^3F: !jNC Mtr] ?E0U s@uXj_ '*W; 3]0J Wu7A TkbA= 1NI))U 3n9L d15l. |rEj p3wp ,S:e 2U%] _H"j +iqM"= }|n[=O| }]rzui r5Cg nXpG Z^M7? S=!I &T9- Ud?L% 5pp6 Xwk> X{\A =}"n .QN3 l}+j) t6WB  YPVT /[8% |,,l 8D^G CS\0 FIu^ *xlx ZL!*S Uk35/ Ln.ma `^5sX :S1( S%E;7 "AmA ErL> IXHS ,47L /#Ds4 Q%_L U4F1 BU=HXjbRW Xhe<$ c?Y? .|-L "[so ?4>7 }3b' nu&A +/>{ Gx0O_ G?N>u -W&C/c@ |x@"R5^ 6%[7 ?aET .Ib}e yC^5$ Xkkj $iCq {CUS (N"l: +>Nir X43Xf hWCWD g'19 'v?`V V?1fF/^ _h7Zb;^ DjNHU6ge 3Lz( I\cf "V > VCmi[ -Cr)} qt&W o`Fa 7J"v cQ1qR Ds^gG OTuYe1Q oH+j c\>(=g$ok E$sJ[^S F/W*m *=[+J K+8$ )uX< Ufg7 H-dn0w ep~(oD#S sd@M ?nku[ fy7T<vm 0A^`X =nvH cDGJc Fy_0 .C5) *$XOx {9<"aO 5|w9 9m\M :s]' n1vX y2N^ 1FZa_  nbEA TZ=pR* e@sS;/ nSX7 vvTb @6I2p: HU825 k9;r/ ];c: TBbl/ ,zIF: Ddi= 6&z"J z$)nIq s^+, -n}wC yb"]aF{} Yeq@=v3 Id"{ * n2 WNw* thD- xTH>u Mk3} v)nJ :#N, <7M; 'Z9J +qR: sfqi cH6VRronN p9$B 5Nt<e wM.:Q Rv)o +0Nr h_yx M ]4 [Y8n 3Hfp mU|D "f|} IAn.^ <}x? dzY4 ao\j sF*G sKYW L%tk J@WA32 s|B] x^>]<a rz<r @U"* !xk6 Y@xe ySOP 5OuU j0!FyRN0 !;C~ ?,eAz kP`8 g^My[{ -<#* 2's7,!^, l1$! oRH" g]J2 L#!v 2NYab runc (ST<p8 1=nN @JIj TvpT $urYc +G,&: A`\E o^!g b([Bj ~*.de T13u #LB1[ {jcR 8rFz U3i x$ <%pv ,*Y#Qw% ~NrY S>9p LrQ* t /y] B(j' JEYC B$D9j$EP  TF.'+ r&ho Ve5w P2bkn[0R t%@_ {:w% cSHr' 92OI= t]\P GAj]W IJ~C hHpsk [xY#8 Ulqa %gxa! i8.g VEt; mtJ_u )U`{?Sa c,e) VYJ6IO OnY-N 'yki o$KL D /w mFk' kc4@ bl-> ~w.=ot ZjUkt Y"i< yz;cb zg&DT e)L|xE >3ReJ7 l&\S{ <zF. xE:Z ;1H? $V6Bz xCD$ .3h5 2#Ay 8SA, e{l* iy+>2 #+,{ M=)~ %4Vp xkaC +q>I J1N}K ,U<, ?cY=r A@;$ VT<K |\Oq YX6q ]@vK QoML nk</ 9HxY~\ <.iH '+)i |>PU egd2 !(+Kv> Zr>? C@D2o KKB}l KHQ| LAVR ."g2]* HC&' VRkLiJ6 'bD:( NVfL GfP+ uUB5L 1;fs 12.H,2] 9a2g)gt fx~& IF|s *QD  wSe"\ e>@U UW1F !cggp P?F# C(2lXoV AM1o3 `>f&D z{R@ 7WMoT |^TL]D? cMq{" D>8t ibH< +x+n Gyc] k?")=ib F+_M U:c  99j\ 2bvE bkH) !\jCU u+rU y+k3Jr +MzT0j s9j  -m*" evhA 329kO agd5 ]sN3 k)#Z EL4H p6~U "Uz,,; <UeK 12k? <rO-PzQ fs-" 5kW,}  Jtr rWW3} #@lHy %!oz vEI* /\;  6'Ib}c "2K}c  1D9Y U@b} P'el "sw, [ T!l BQHH o<CvC{~ ;U:zk SHn} 3k.\O IdF> R.8kO 3kcd 4k>p p`e%x |sWF <QJ}V CyS~ I&qF y5[; 4N7[ gDr% Fv9Y RfC__ oa[( rv8W]Y N!b$ X%V9 <7^" / U> Th|\ I^,".:, hp-P Shiq "AK)P o45=J TO-B, :avS .mu$ 6Q:P% weD`~ u%E.d~,6 Ixvt9 #=}$` 1/wS ?G9. N>FAc M#ytc@d C<nR LE#Q [IRY<a M2KK @TpH TV=` 0e~' &HEF iHtE ka1R %L>n Sy>>& {sp4 s?S. qp;W [Sf_ &Wo5a )H5s  '%V !Kd0MI@ @ J^+? W,gl) <7;k 0fd_m$9 q``m p%\T Q,|=* aoJ~ Evw. ]Q}@t UA8p1 D%^r &5dH~ 'M"XN -_X9 sb_t- 397HTc b17z x=Vv Ye!)jtY_1 hJ]z CaM# XGV- rd4Lv Ef<M `"4F QnI# z8.H -b:T C34x &/ok CYxH* 3T:. #QK1 rE\r QY`) JP%a F'lYB| TDy<L r/w_ -$^&o m&"N ('~` {6C" >26;- smw; 9^"H[ ]>-M Gh$u R91: 'gn94 H$rZ nX?R&ee~r 93Ni \1aS a-4V [cqd@ [0Ym e<S` Uc5V Lrg{ nxHo ALujm$ w|vX *{Zn= t?K^ h;31 7gTl #?G(~ &qxi( m!/H l+r~v fs]l  N'm _*pk~ PvO8n zaJL& x0'XjX Qg9; SUeJ> KyO  MY[9 x(!_ oz_K S6Oj~M gxB- uLb& UqQc ~0iH qYvF %]#! \ol-N 78QF  6zO  MgAx $*;{k@ +;|e? p}T2 e<Qm Q_\Q OY{/ e8+Z x{1P :Vx0 W#dv e-Z3@O3 +d** *[>b SO]?t* -15xu Jf3% }_"/i ;&D) 1Ab/ ~Y<Z} Q#!/ nQfY )\6  wf;t S5!F b*Z( iwo'* Z?~:g :'~Ox -s9P +T=W NI)M *U1J IDw4 'd8= 'g.{ _k$8 cl'a1N3 C#wh IF$1 S{ n yf-.  VyM; }k`+\%V t5;f \(N9r+V krSQ \%agt exfs *c_@ )~{L RyL+ ps~z )cN  h5@h1 tA;= F$Lh &2*zTb ?UJKQ iMi> KSAAAQ FD.@P +pRU wtdW #/+~ Y>\vert{}v8 f83- r^8yX +Kel34/ &\vert{}R\%^ g.0V\ !Grf 3(i; \Spi- ;?N8 I~Gvt SgVs -p`! R5nP*4 +I f ~)J?O $A&> cb}Haf5 wR5)~B @'K?j <H>=F ~"+nF t{oD -s46D FPF3  MSN4 SfXl. YFVF3 d7U~ MVW3;H sfJa t+Q! ?`wO <#/8 [Z{/ O:0>=5d %:WS$ Vs9{ (K?Wl 9hk6*E 33C` 5bGo "Lak Wp[l w^Oa zcp# l>=0 6L3m :.NK JDhG} }V^m 6H%>6O EQS( r19J ]upkzN rP0V sV8=q:qRu [kpw hB9i )r50 4n9~4mY kb\2[ o1lK-N Y@kc *Z7xnZ: ovi= j6P" 5-@_P |:_@ y+>R .P Pv sCZk7 EQd= _l&b K<2a 1,,w:C :2-5 ~(lp ;HJS .NUy gjk3%R_]\ d" 4 Gg|Y adNv j5O[ Z3]> ~o|b B_vL '?KH @m?g\p  .h+F UdX- e!f& Xo~* Ou{l* 3ld^ A` @88 z<"mB !5%n s+$N _`uL\ i%38 LV2X H;|' d$h;9C }S&rp \TU2 _0ZES Hno  ^j[A h[==yS J1"4 R8+g 0E%. AiXD" p]*!8 DkYT *[r_N} $IY< \%\%UE ?7#jT ?#1pL/@ (?B1$ $Yzb  N;U !O%E LGJf Ils> tu7, +&X  SoRD LE6lrj |\m3w ^Uwlh'> VH'7 _%[#Tl" y"S/ |*zJH v~^D w}lC v0e(}T 'Gv\ __v` <Q8;=q Wy/b I_IpQ --XN _adz j|gO @NEX #6xX (P.W X([3m)d p 3W$q m?{1 ?ev; H[x? `OD^ :9tHuo>> B8$Wq "!^5< ],n{ D==y 6x{pb JHj\ !MLh9 y2J_ :u@= *"%U &xvVte 'yn4 5Y<m) 73\pmT ,481 -of# W5|?D ,zqA 1Os:F.B &pTj WX?c E{CS ^BPb JGUN qP@I VWwR! M_~& Qq][  BZW +HNpZ:~ -VZ&R ^;@B B ba? ?W J? _0R1 B@B 7 iSV+ y.'c ">!'6 5lo0 't;X xG/uc V.); ZS),{ ,Lp l L`+S_ &K'R E}]. OjyYf OJW% [fYX {{u4 nM>% 'SZf Tg{65 dt[6 (Y^*N G~1[rtv'^ t;-t |A-z ,|g{ei A8h@ wSks 836=*P 6Z%-4Dy &-Qgy z\ E< X>uS p\vwy $pj+ s%H&3R c.0- I#znbK 0^mS1 {|mJ Ure~ o,*k h:}[b q=e| w:*60D Q(K[ ]58O [ks[ ).^pMu I` q cusI PR<)V <0ts q0Om v*=K1 :!e; CNn{ )g}k Lf); )9E}5 `ikH xa<u ;oZ{ bg-j- 5@+6> %[B& 1 a}' [b+F _o%y +*-o Pslo tk#j E;dA qYN1r 8gb} VsNo 8JL/= Dg.:X 3k!h R6{*k zm%C _liN@ cH'D [0f! '4$z2r ]%)| io;#'n3S}3 }W<" KH1r CrOg HF#H QXrI x_|#&q;9 5gG. AWa> 1_E! bjlhv !lNf (xl: ;rtS P]9tZx 6l>4 EQft I5gL:1 Qm*6K ?.beb OMpAFN gI"D |/qm wxIS xnY> U\9e_ #Z+!* %k_u X-Ox6 f=/)v{ m(3i: *`Fr u)%<; G$[h %1Kd e.3l iJVGI 1X!#: Nk;` ;!b:%~ j}7r &o~I[ "_%4 _dcn dTBn ";iQ SowI hEv3 SKSH (M3P@ lGwy 5;c`8 H7sD %(Yfy \TaUmn l?x% VL8D@ nUK? }fCp #+<e? go{; &E>n:3 LN"> g9.-AyR =~0, rC*0 ud*c y{HQ o.<e/} V"?| [a3S> v>:R_N myjE CEYM 0<\T/ (!*4< E=vl ?Z]O }K!k# public/assets/aistudio/Gemini_Generated_Image_x767mhx767mhx767_5b18910b.jpg ijdb ^!>n /Z>?k jlij VTtF ]h{4( *5.A hnY-n [s vFfYF ]Lad EyB`0z B%XQh QQNUQ M]AUN c-^2}o 'f4# 22rU?` EuBD "zq;8` uR+mf U#DB :%>l 9EUAA kM;wHr +8&2j] N!yh 8|OE V_AOg Zzr: <nywJG .~Mr0zf TP]E* ")cc de`k >x.] /w(/#e4 2{8^j9[ \8c0? 7N~9 xQTVSTUW arA$ow U^Ih 2&Ot ;d+V E$:H <XU!P rh77%9 W%%9% '1F] 9axx~ k6d`Q mqtC pw%{ }e0} ?(S,  FRY `q9Eu }J+U W2b3]XWbT{ w~fM-u kZ^*W f(x6 rd]<4; ?;kL s!W'[J 6S0T 'Oj4 }vI2 isO2 23Q: C$/3 `Zf79 ]tJy{ <'7b K_:4 |8q/ QPzd 0:'VF1';^ /Y)i dPbs>:t kxma i/ZK XN$' LyL3 9Nj; 20?# j_{- 'Of} O>Y/_; p+K.! ]ZbV @#84 z~r?W g3ed %m)F qVf5& ,vu_ iN,< @QD+$ ta1d \.}b >$u'` \@o2 \]&Y =ghui MCZOt{ 5S4g `]x mv]o P?P+ 1gX{ +me. CYO> :j~?sn MAY/ \HA*bs "\YZ tx3ZH u0#iY ]-}~ Zjba! q:6LaP <Ovr 3q\< '@m^)k H<Zo "49S:{ kXm, v\@+ K`]z wBxS jCk7M Kx['|YC 9^fW Z6cJ=t #+++ Se+*BX/O (,8u+ K8-)C $,*m 7TFK*j })Ly ,(FIg?M VNUu  "u8'g U&>h2 fSw+ N)PH u<~, _{ABBo z:WzN 0U/x qh/Dt gf,J r-c~ QX;t ,LLO RxDO MM9k fc#3 \8Zx a2EQ CnUB }K<U [>2H k>#. S*u5 R*po G^c} >?;% +u+>I M.@x +W<co tmZ5 &h)5/? _;pDB yLr: M!}? 9p<R B'*} u0R| aZIE fmdI z@WD ;U2+%PqM>8 MJ.t gjz: cotr h$Ws[rv6 &Z>H1 F,5m| ~K{d )l:{ wqxR N\*) tF}V aFMVp *Kt;- aLew y4Xe* 9-X6 ShiDP hdWPO >tOTA )4;6 Np~9 E3+9, t_3# iIH: {D>wD }+M_ _)oXx )Nw/ -/+] QgsMNW iavfc P"KZ a/o/4 /V=U we~] /*b3-\ 2,Bn 5Lj^r @\U, f.'P R=D' n(w< {S|^ #}R] =Q&5 ,Zf:3| $P&RP Z %~ 6lkM ,kAE Xooy M50l  V_dk Rv5| 8Jc^ Qqc" 5rhC F7?o R:uz Wr7C +)uh  ,|V; 1q~4 _Hyu SY9?<n q\<t K)wEea G/)6 S6R{ Ri?q2, K}r- Av=J jVGd u:bQ {YTy |iR
